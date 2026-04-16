@@ -69,6 +69,7 @@ app.MapGet("/api/classify", async(string name, IHttpClientFactory httpClientFact
     };
     return Results.Ok(result);
 });
+app.Urls.Add("http:0.0.0.0:8080");
 
 app.Run();
 public class GenderizeResponse
