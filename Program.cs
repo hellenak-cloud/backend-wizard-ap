@@ -74,8 +74,8 @@ app.Run();
 public class GenderizeResponse
 {
     public int count{get; set;}
-    public string name {get; set;}
-    public string gender {get; set;}
+    public string? name {get; set;}
+    public string? gender {get; set;}
     public double probability {get; set;}
 }
 
