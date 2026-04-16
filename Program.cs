@@ -69,8 +69,8 @@ app.MapGet("/api/classify", async(string name, IHttpClientFactory httpClientFact
     };
     return Results.Ok(result);
 });
-var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-app.Run($"http://0.0.0.0:{port}");
+
+app.Run();
 public class GenderizeResponse
 {
     public int count{get; set;}
