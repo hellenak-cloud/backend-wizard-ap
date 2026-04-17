@@ -10,13 +10,13 @@ builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// ✅ camelCase JSON
+
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
 });
 
-// ✅ CORS
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
@@ -27,7 +27,7 @@ builder.Services.AddCors(options =>
     });
 });
 
-// ✅ Database
+//  Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseSqlite("Data Source=profiles.db"));
 
@@ -44,9 +44,9 @@ app.UseCors("AllowAll");
 app.UseHttpsRedirection();
 
 
-// =====================
-// ✅ CREATE PROFILE
-// =====================
+
+// CREATE PROFILE
+
 app.MapPost("/api/profiles", async (
     ProfileRequest request,
     AppDbContext db,
@@ -151,9 +151,9 @@ app.MapPost("/api/profiles", async (
 });
 
 
-// =====================
-// ✅ GET SINGLE PROFILE
-// =====================
+
+// GET SINGLE PROFILE
+
 app.MapGet("/api/profiles/{id}", async (string id, AppDbContext db) =>
 {
     if (!Guid.TryParse(id, out var guidId))
@@ -184,9 +184,9 @@ app.MapGet("/api/profiles/{id}", async (string id, AppDbContext db) =>
 });
 
 
-// =====================
-// ✅ GET ALL PROFILES
-// =====================
+
+// GET ALL PROFILES
+
 app.MapGet("/api/profiles", async (
     string? gender,
     string? country_id,
@@ -225,9 +225,9 @@ app.MapGet("/api/profiles", async (
 });
 
 
-// =====================
-// ✅ DELETE PROFILE
-// =====================
+
+// DELETE PROFILE
+
 app.MapDelete("/api/profiles/{id}", async (string id, AppDbContext db) =>
 {
     if (!Guid.TryParse(id, out var guidId))
@@ -259,9 +259,9 @@ app.MapDelete("/api/profiles/{id}", async (string id, AppDbContext db) =>
 app.Run();
 
 
-// =====================
+
 // DTO CLASSES
-// =====================
+
 public class ProfileRequest
 {
     public string Name { get; set; } = string.Empty;
