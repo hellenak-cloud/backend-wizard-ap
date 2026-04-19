@@ -5,15 +5,12 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
 builder.Services.AddHttpClient();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.ConfigureHttpJsonOptions(options =>
-{
-    options.SerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
-});
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlite("Data Source=profiles.db"));
 
 builder.Services.AddCors(options =>
 {
@@ -25,55 +22,33 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Database
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=profiles.db"));
-
 var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
-
-if (app.Environment.IsDevelopment())
-{
-    app.MapOpenApi();
-}
-
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
 
 
-
+// =====================
 // CREATE PROFILE
-
-
+// =====================
 app.MapPost("/api/profiles", async (
     ProfileRequest request,
     AppDbContext db,
     IHttpClientFactory httpClientFactory) =>
 {
-    if (request == null || string.IsNullOrWhiteSpace(request.Name))
+    if (string.IsNullOrWhiteSpace(request?.Name))
     {
-        return Results.BadRequest(new
-        {
-            status = "error",
-            message = "Missing or empty name"
-        });
+        return Results.BadRequest(new { status = "error", message = "Name is required" });
     }
 
     var name = request.Name.Trim().ToLower();
 
-    var existing = await db.Profiles
-        .FirstOrDefaultAsync(x => x.Name.ToLower() == name);
-
+    var existing = await db.Profiles.FirstOrDefaultAsync(x => x.Name == name);
     if (existing != null)
     {
-        return Results.Ok(new
-        {
-            status = "success",
-            message = "Profile already exists",
-            data = existing
-        });
+        return Results.Ok(new { status = "success", message = "Profile already exists", data = existing });
     }
 
     var client = httpClientFactory.CreateClient();
@@ -82,49 +57,20 @@ app.MapPost("/api/profiles", async (
     var ageTask = client.GetStringAsync($"https://api.agify.io?name={name}");
     var countryTask = client.GetStringAsync($"https://api.nationalize.io?name={name}");
 
-    try
-    {
-        await Task.WhenAll(genderTask, ageTask, countryTask);
-    }
-    catch
-    {
-        return Results.Json(new
-        {
-            status = "error",
-            message = "External API failure"
-        }, statusCode: 502);
-    }
+    await Task.WhenAll(genderTask, ageTask, countryTask);
 
     var genderData = System.Text.Json.JsonSerializer.Deserialize<GenderResponse>(genderTask.Result);
     var ageData = System.Text.Json.JsonSerializer.Deserialize<AgeResponse>(ageTask.Result);
     var countryData = System.Text.Json.JsonSerializer.Deserialize<CountryResponse>(countryTask.Result);
 
-    
-    // VALIDATION (FIXED FOR GRADER)
-    
+    // safe fallback handling
+    var gender = genderData?.gender ?? "unknown";
+    var genderProb = genderData?.probability ?? 0;
+    var sampleSize = genderData?.count ?? 0;
 
-    if (genderData == null ||
-        string.IsNullOrWhiteSpace(genderData.gender) ||
-        genderData.probability <= 0 ||
-        genderData.count <= 0)
-    {
-        return Results.Json(new { status = "error", message = "Genderize returned invalid data" }, statusCode: 502);
-    }
+    var age = ageData?.age ?? 0;
 
-    if (ageData == null || ageData.age == null || ageData.age <= 0)
-    {
-        return Results.Json(new { status = "error", message = "Agify returned invalid data" }, statusCode: 502);
-    }
-
-    if (countryData == null || countryData.country == null || !countryData.country.Any())
-    {
-        return Results.Json(new { status = "error", message = "Nationalize returned invalid data" }, statusCode: 502);
-    }
-
-    
-    // AGE GROUP LOGIC
-    
-    string ageGroup = ageData.age switch
+    var ageGroup = age switch
     {
         <= 12 => "child",
         <= 19 => "teenager",
@@ -132,37 +78,24 @@ app.MapPost("/api/profiles", async (
         _ => "senior"
     };
 
-    
-    // SAFE COUNTRY PICK
-
-    var topCountry = countryData.country
-        .Where(c => !string.IsNullOrWhiteSpace(c.country_id) && c.probability > 0)
+    var topCountry = countryData?.country?
         .OrderByDescending(c => c.probability)
         .FirstOrDefault();
 
-    if (topCountry == null)
-    {
-        return Results.Json(new
-        {
-            status = "error",
-            message = "No valid country data"
-        }, statusCode: 502);
-    }
+    var countryId = topCountry?.country_id ?? "XX";
+    var countryProb = topCountry?.probability ?? 0;
 
-    
-    // CREATE PROFILE
-    
     var profile = new Profile
     {
         Id = Guid.NewGuid(),
         Name = name,
-        Gender = genderData.gender ?? "unknown",
-        GenderProbability = genderData.probability > 0 ? genderData.probability : 0.01,
-        SampleSize = genderData.count > 0 ? genderData.count : 1,
-        Age = ageData.age ?? 0,
+        Gender = gender,
+        GenderProbability = genderProb,
+        SampleSize = sampleSize,
+        Age = age,
         AgeGroup = ageGroup,
-        CountryId = topCountry.country_id ?? "XX",
-        CountryProbability = topCountry.probability > 0 ? topCountry.probability : 0.01,
+        CountryId = countryId,
+        CountryProbability = countryProb,
         CreatedAt = DateTime.UtcNow
     };
 
@@ -177,43 +110,9 @@ app.MapPost("/api/profiles", async (
 });
 
 
-
-// GET SINGLE PROFILE
-
-app.MapGet("/api/profiles/{id}", async (string id, AppDbContext db) =>
-{
-    if (!Guid.TryParse(id, out var guidId))
-    {
-        return Results.BadRequest(new
-        {
-            status = "error",
-            message = "Invalid ID format"
-        });
-    }
-
-    var profile = await db.Profiles.FindAsync(guidId);
-
-    if (profile == null)
-    {
-        return Results.NotFound(new
-        {
-            status = "error",
-            message = "Profile not found"
-        });
-    }
-
-    return Results.Ok(new
-    {
-        status = "success",
-        data = profile
-    });
-});
-
-
-
-// GET ALL PROFILES
-
-
+// =====================
+// GET ALL
+// =====================
 app.MapGet("/api/profiles", async (
     string? gender,
     string? country_id,
@@ -223,16 +122,21 @@ app.MapGet("/api/profiles", async (
     var query = db.Profiles.AsQueryable();
 
     if (!string.IsNullOrWhiteSpace(gender))
-        query = query.Where(x => x.Gender.ToLower() == gender.ToLower());
+        query = query.Where(x => x.Gender == gender);
 
     if (!string.IsNullOrWhiteSpace(country_id))
-        query = query.Where(x => x.CountryId.ToLower() == country_id.ToLower());
+        query = query.Where(x => x.CountryId == country_id);
 
     if (!string.IsNullOrWhiteSpace(age_group))
-        query = query.Where(x => x.AgeGroup.ToLower() == age_group.ToLower());
+        query = query.Where(x => x.AgeGroup == age_group);
 
-    var result = await query
-        .Select(x => new
+    var result = await query.ToListAsync();
+
+    return Results.Ok(new
+    {
+        status = "success",
+        count = result.Count,
+        data = result.Select(x => new
         {
             id = x.Id,
             name = x.Name,
@@ -241,42 +145,42 @@ app.MapGet("/api/profiles", async (
             age_group = x.AgeGroup,
             country_id = x.CountryId
         })
-        .ToListAsync();
-
-    return Results.Ok(new
-    {
-        status = "success",
-        count = result.Count,
-        data = result
     });
 });
 
 
+// =====================
+// GET BY ID
+// =====================
+app.MapGet("/api/profiles/{id}", async (string id, AppDbContext db) =>
+{
+    if (!Guid.TryParse(id, out var guid))
+    {
+        return Results.BadRequest(new { status = "error", message = "Invalid ID format" });
+    }
 
-// DELETE PROFILE
+    var profile = await db.Profiles.FindAsync(guid);
+
+    return profile == null
+        ? Results.NotFound(new { status = "error", message = "Not found" })
+        : Results.Ok(new { status = "success", data = profile });
+});
 
 
+// =====================
+// DELETE
+// =====================
 app.MapDelete("/api/profiles/{id}", async (string id, AppDbContext db) =>
 {
-    if (!Guid.TryParse(id, out var guidId))
+    if (!Guid.TryParse(id, out var guid))
     {
-        return Results.BadRequest(new
-        {
-            status = "error",
-            message = "Invalid ID format"
-        });
+        return Results.BadRequest(new { status = "error", message = "Invalid ID format" });
     }
 
-    var profile = await db.Profiles.FindAsync(guidId);
+    var profile = await db.Profiles.FindAsync(guid);
 
     if (profile == null)
-    {
-        return Results.NotFound(new
-        {
-            status = "error",
-            message = "Profile not found"
-        });
-    }
+        return Results.NotFound();
 
     db.Profiles.Remove(profile);
     await db.SaveChangesAsync();
@@ -287,13 +191,12 @@ app.MapDelete("/api/profiles/{id}", async (string id, AppDbContext db) =>
 app.Run();
 
 
-
-// DTO CLASSES
-
-
+// =====================
+// DTOs
+// =====================
 public class ProfileRequest
 {
-    public string Name { get; set; } = string.Empty;
+    public string Name { get; set; } = "";
 }
 
 public class GenderResponse
@@ -310,11 +213,11 @@ public class AgeResponse
 
 public class CountryResponse
 {
-    public List<CountryItem> country { get; set; } = new();
+    public List<CountryItem>? country { get; set; }
 }
 
 public class CountryItem
 {
-    public string country_id { get; set; } = string.Empty;
+    public string country_id { get; set; } = "";
     public double probability { get; set; }
 }
